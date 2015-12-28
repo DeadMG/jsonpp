@@ -22,6 +22,8 @@
 #include <catch.hpp>
 #include <jsonpp/value.hpp>
 
+#define COMMA ,
+
 TEST_CASE("accessors", "[subscripts-accessors]") {
     json::value v = { json::object{ {"test", 1} }, nullptr, "my_string", 1.0 };
     json::value o = json::object{ {"key", "value"}, {"int", 1} };
@@ -43,6 +45,7 @@ TEST_CASE("accessors", "[subscripts-accessors]") {
     };
 
     SECTION("get from complex structure") {
+        REQUIRE(v[0].is<std::map<std::string COMMA int>>());
         REQUIRE(v[0]["test"].is<int>());
         REQUIRE(v[0]["test"].as<int>() == 1);
     };

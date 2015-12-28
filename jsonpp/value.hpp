@@ -35,11 +35,39 @@
 #include <iosfwd>
 
 namespace json {
+    class value;
+
+    template<typename T, typename = void> struct is_valid_json_type {
+        static const bool result = false;
+    };
+    template<> struct is_valid_json_type<bool> {
+        static const bool result = true;
+    };
+    template<> struct is_valid_json_type<json::value> {
+        static const bool result = true;
+    };
+    template<> struct is_valid_json_type<json::null> {
+        static const bool result = true;
+    };
+    template<typename T> struct is_valid_json_type<T, std::enable_if_t<json::is_string<T>::value>> {
+        static const bool result = true;
+    };
+    template<typename T> struct is_valid_json_type<T, std::enable_if_t<json::is_number<T>::value>> {
+        static const bool result = true;
+    };
+    template<typename T> struct is_valid_json_type<std::vector<T>> {
+        static const bool result = is_valid_json_type<T>::result;
+    };
+    template<typename T> struct is_valid_json_type<std::map<std::string, T>> {
+        static const bool result = is_valid_json_type<T>::result;
+    };
+
 class value {
 public:
     using object = std::map<std::string, value>;
     using array  = std::vector<value>;
 private:
+    template<typename T> struct type_tag {};
     union storage_t {
         double number;
         bool boolean;
@@ -72,9 +100,110 @@ private:
         storage_type = other.storage_type;
     }
 
+    bool is_impl(type_tag<std::string>) const JSONPP_NOEXCEPT {
+        return storage_type == type::string;
+    }
+
+    bool is_impl(type_tag<const char*>) const JSONPP_NOEXCEPT {
+        return storage_type == type::string;
+    }
+
+    bool is_impl(type_tag<json::null>) const JSONPP_NOEXCEPT {
+        return storage_type == type::null;
+    }
+
+    template<typename T> std::enable_if_t<json::is_number<T>::value, bool>
+    is_impl(type_tag<T>) const JSONPP_NOEXCEPT {
+        return storage_type == type::number;
+    }
+
+    bool is_impl(type_tag<bool>) const JSONPP_NOEXCEPT {
+        return storage_type == type::boolean;
+    }
+
+    bool is_impl(type_tag<json::value>) const JSONPP_NOEXCEPT {
+        return true;
+    }
+
+
     template<typename T>
-    struct is_generic : And<Not<is_string<T>>, Not<is_bool<T>>, Not<is_number<T>>,
-                            Not<is_null<T>>, Not<std::is_same<T, object>>, Not<std::is_same<T, array>>> {};
+    bool is_impl(type_tag<std::map<std::string, T>>) const JSONPP_NOEXCEPT {
+        if (storage_type != type::object)
+            return false;
+        for (auto&& pair : *storage.obj) {
+            if (!pair.second.is<T>())
+                return false;
+        }
+        return true;
+    }
+
+    template<typename T>
+    bool is_impl(type_tag<std::vector<T>>) const JSONPP_NOEXCEPT {
+        if (storage_type != type::array)
+            return false;
+        for (auto&& obj : *storage.arr) {
+            if (!obj.is<T>())
+                return false;
+        }
+        return true;
+    }
+
+    const char* as_impl(type_tag<const char*>) const {
+        if (!is<const char*>())
+            throw std::runtime_error("Invalid JSON type.");
+        return storage.str->c_str();
+    }
+
+    std::string as_impl(type_tag<std::string>) const {
+        if (!is<std::string>())
+            throw std::runtime_error("Invalid JSON type.");
+        return *(storage.str);
+    }
+
+    json::null as_impl(type_tag<json::null>) const {
+        if (!is<json::null>())
+            throw std::runtime_error("Invalid JSON type.");
+        return{};
+    }
+
+    bool as_impl(type_tag<bool>) const {
+        if (!is<bool>())
+            throw std::runtime_error("Invalid JSON type.");
+        return storage.boolean;
+    }
+
+    template<typename T> std::enable_if_t<json::is_number<T>::value, T> as_impl(type_tag<T>) const {
+        if (!is<double>())
+            throw std::runtime_error("Invalid JSON type.");
+        return storage.number;
+    }
+
+    json::value as_impl(type_tag<json::value>) const {
+        return *this;
+    }
+    
+    template<typename T>
+    std::map<std::string, T> as_impl(type_tag<std::map<std::string, T>>) const {
+        if (!is<std::map<std::string, T>>())
+            throw std::runtime_error("Invalid JSON type.");
+        auto contents = *storage.obj;
+        std::map<std::string, T> result;
+        for (auto&& pair : contents)
+            result[pair.first] = pair.second.as<T>();
+        return result;
+    }
+
+    template<typename T>
+    std::vector<T> as_impl(type_tag<std::vector<T>>) const {
+        if (!is<std::vector<T>>())
+            throw std::runtime_error("Invalid JSON type.");
+        auto contents = *(storage.arr);
+        auto results = std::vector<T>();
+        for (auto&& obj : contents)
+            results.push_back(obj.as<T>());
+        return results;
+    }
+
 public:
     value() JSONPP_NOEXCEPT: storage_type(type::null) {}
     value(null) JSONPP_NOEXCEPT: storage_type(type::null) {}
@@ -223,91 +352,20 @@ public:
         storage_type = type::null;
     }
 
-    template<typename T, EnableIf<is_string<T>> = 0>
+    template<typename T>
     bool is() const JSONPP_NOEXCEPT {
-        return storage_type == type::string;
+        static_assert(is_valid_json_type<T>::result, "Passed a type argument to is() which is not valid JSON");
+        return is_impl(type_tag<T>());
     }
-
-    template<typename T, EnableIf<is_null<T>> = 0>
-    bool is() const JSONPP_NOEXCEPT {
-        return storage_type == type::null;
-    }
-
-    template<typename T, EnableIf<is_number<T>> = 0>
-    bool is() const JSONPP_NOEXCEPT {
-        return storage_type == type::number;
-    }
-
-    template<typename T, EnableIf<is_bool<T>> = 0>
-    bool is() const JSONPP_NOEXCEPT {
-        return storage_type == type::boolean;
-    }
-
-    template<typename T, EnableIf<std::is_same<T, object>> = 0>
-    bool is() const JSONPP_NOEXCEPT {
-        return storage_type == type::object;
-    }
-
-    template<typename T, EnableIf<std::is_same<T, array>> = 0>
-    bool is() const JSONPP_NOEXCEPT {
-        return storage_type == type::array;
-    }
-
-    template<typename T, EnableIf<is_generic<T>> = 0>
-    bool is() const JSONPP_NOEXCEPT {
-        return false;
-    }
-
-    template<typename T, EnableIf<std::is_same<T, const char*>> = 0>
+    template<typename T>
     T as() const {
-        assert(is<T>());
-        return storage.str->c_str();
-    }
-
-    template<typename T, EnableIf<std::is_same<T, std::string>> = 0>
-    T as() const {
-        assert(is<T>());
-        return *(storage.str);
-    }
-
-    template<typename T, EnableIf<is_null<T>> = 0>
-    T as() const {
-        assert(is<T>());
-        return {};
-    }
-
-    template<typename T, EnableIf<is_bool<T>> = 0>
-    T as() const {
-        assert(is<T>());
-        return storage.boolean;
-    }
-
-    template<typename T, EnableIf<is_number<T>> = 0>
-    T as() const {
-        assert(is<T>());
-        return storage.number;
-    }
-
-    template<typename T, EnableIf<std::is_same<T, object>> = 0>
-    T as() const {
-        assert(is<T>());
-        return *(storage.obj);
-    }
-
-    template<typename T, EnableIf<std::is_same<T, array>> = 0>
-    T as() const {
-        assert(is<T>());
-        return *(storage.arr);
-    }
-
-    template<typename T, EnableIf<is_generic<T>> = 0>
-    T as() const {
-        throw std::runtime_error("calling value::as<T>() on an invalid type (use a json type instead)");
+        static_assert(is_valid_json_type<T>::result, "Passed a type argument to as() which is not valid JSON");
+        return as_impl(type_tag<T>());
     }
 
     template<typename T>
-    T as(Identity<T>&& def) const {
-        return is<T>() ? as<T>() : std::forward<T>(def);
+    std::decay_t<T> as(T&& def) const {
+        return is<std::decay_t<T>>() ? as<std::decay_t<T>>() : std::forward<T>(def);
     }
 
     template<typename T, EnableIf<is_string<T>> = 0>

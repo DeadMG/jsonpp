@@ -22,6 +22,10 @@
 #include <catch.hpp>
 #include <jsonpp/parser.hpp>
 
+template<> std::string Catch::toString<std::nullptr_t>(const std::nullptr_t& ptr) {
+    return "null";
+}
+
 TEST_CASE("numbers", "[basic-numbers]") {
     json::value v;
     json::format_options minify;
@@ -125,7 +129,7 @@ TEST_CASE("strings", "[basic-strings]") {
     }
 
     SECTION("escaped strings") {
-        REQUIRE_NOTHROW(json::parse(R"("\"")", v));
+        REQUIRE_NOTHROW(json::parse("\"\\\"\"", v));
         REQUIRE(!v.is<json::array>());
         REQUIRE(!v.is<double>());
         REQUIRE(v.is<std::string>());
@@ -133,13 +137,13 @@ TEST_CASE("strings", "[basic-strings]") {
         REQUIRE(!v.is<bool>());
         REQUIRE(!v.is<json::null>());
         REQUIRE(!v.is<json::object>());
-        REQUIRE(json::dump_string(v, minify) == R"("\"")");
+        REQUIRE(json::dump_string(v, minify) == "\"\\\"\"");
 
         auto&& str1 = v.as<std::string>();
         REQUIRE(str1.size() == 1);
         REQUIRE(str1.back() == '"');
 
-        REQUIRE_NOTHROW(json::parse(R"("\t\n\b\"\u2000\u1234")", v));
+        REQUIRE_NOTHROW(json::parse("\"\\t\\n\\b\\\"\\u2000\\u1234\"", v));
         REQUIRE(!v.is<json::array>());
         REQUIRE(!v.is<double>());
         REQUIRE(v.is<std::string>());
@@ -217,17 +221,17 @@ TEST_CASE("arrays", "[basic-arrays]") {
     SECTION("single element array") {
         REQUIRE_NOTHROW(json::parse("[10]\n\t\n", v));
         REQUIRE(v.is<json::array>());
+        REQUIRE(v.is<std::vector<int>>());
         REQUIRE(!v.is<double>());
         REQUIRE(!v.is<bool>());
         REQUIRE(!v.is<std::string>());
         REQUIRE(!v.is<json::null>());
         REQUIRE(!v.is<json::object>());
         REQUIRE(json::dump_string(v, minify) == "[10]");
-        auto&& arr = v.as<json::array>();
+        auto&& arr = v.as<std::vector<int>>();
         REQUIRE(!arr.empty());
         REQUIRE(arr.size() == 1);
-        REQUIRE(arr.back().is<int>());
-        REQUIRE(arr.back().as<int>() == 10);
+        REQUIRE(arr.back() == 10);
     }
 
     SECTION("regular array") {
